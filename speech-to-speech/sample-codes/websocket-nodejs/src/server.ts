@@ -1,17 +1,10 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
-import { v4 as uuidv4 } from 'uuid'; // Import uuidv4 for generating unique IDs
-import { randomUUID } from "crypto";
-
 import { Server } from 'socket.io';
 import { fromIni } from "@aws-sdk/credential-providers";
-import { NovaSonicBidirectionalStreamClient } from './client'; // Assuming this is your client library for Nova Sonic
+import { NovaSonicBidirectionalStreamClient } from './client';
 import { Buffer } from 'node:buffer';
-import { queryKnowledgeBase } from './kb'; // Assuming this is your knowledge base query function
-// Import the DefaultAudioInputConfiguration type from your consts file
-import { DefaultAudioInputConfiguration } from './consts';
-
 
 // Configure AWS credentials
 const AWS_PROFILE_NAME = process.env.AWS_PROFILE || 'bedrock-test';
@@ -20,21 +13,6 @@ const AWS_PROFILE_NAME = process.env.AWS_PROFILE || 'bedrock-test';
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-
-// Define a default audio configuration for Nova Sonic.
-// This configuration is primarily for the *user's* audio input,
-// as the agent's audio output is managed implicitly by Nova Sonic
-// when text content is sent for synthesis.
-// The 'audioType: "SPEECH"' is typically required for Bedrock's speech input.
-const DEFAULT_AUDIO_CONFIG: typeof DefaultAudioInputConfiguration = { // Explicitly type it
-    audioType: 'SPEECH', // Changed to "SPEECH" to match expected type for audio input
-    encoding: 'pcm',  // Encoding of the audio data (e.g., pcm, opus)
-    mediaType: 'audio/lpcm', // Changed to "audio/lpcm" to match the expected type
-    sampleRateHertz: 16000, // Sample rate in Hertz (e.g., 8000, 16000, 22050)
-    sampleSizeBits: 16, // Number of bits per audio sample (e.g., 16)
-    channelCount: 1, // Number of audio channels (e.g., 1 for mono)
-};
-
 
 // Create the AWS Bedrock client
 const bedrockClient = new NovaSonicBidirectionalStreamClient({
@@ -120,52 +98,6 @@ io.on('connection', (socket) => {
             socket.emit('toolResult', data);
         });
 
-        socket.on('userText', async (text: string) => {
-            try {
-                console.log('Texto recibido para KB:', text);
-
-                // Consultar a la Knowledge Base
-                const answer = await queryKnowledgeBase(text);
-                console.log('Respuesta de la KB:', answer);
-
-                // Generar un nuevo contentId para la respuesta del agente
-                const agentContentId = randomUUID();
-
-                // Helper to wait for contentEnd for this contentId
-                const waitForContentEnd = () => new Promise<void>((resolve) => {
-                    const handler = (data: any) => {
-                        if (data.contentId === agentContentId) {
-                            session.offEvent('contentEnd', handler); // Remove handler after use
-                            resolve();
-                        }
-                    };
-                    session.onEvent('contentEnd', handler);
-                });
-
-                // ...existing code...
-                // Enviar la respuesta del agente como texto, para que Nova Sonic la lea en voz alta
-                // Use the prompt with the KB answer
-                const prompt = `ALWAYS ASK THE NAME OF THE PERSON AT THE BEGGINING OF THE CONVERSATION AND The user asked: "${text}". Here is the answer from your knowledge base: "${answer}". 
-                Please answer the user's question using ONLY the information from the knowledge base above. 
-                If the answer is not relevant, politely say you don't know. Speak as an encouraging English teacher.`;
-                await session.sendTextContent(agentContentId, prompt, "ASSISTANT");
-                // ...existing code...
-
-                // Wait for contentEnd before ending prompt
-                await waitForContentEnd();
-                await session.endPrompt();
-
-            } catch (error) {
-                console.error("Error en la sesión:", error);
-                socket.emit('error', {
-                    source: 'responseStream',
-                    message: 'Error processing response stream',
-                    details: String(error)
-                });
-            }
-        });
-
-
         session.onEvent('contentEnd', (data) => {
             console.log('Content end received: ', data);
             socket.emit('contentEnd', data);
@@ -212,11 +144,7 @@ io.on('connection', (socket) => {
         socket.on('systemPrompt', async (data) => {
             try {
                 console.log('System prompt received', data);
-                // This is the initial system prompt for the entire session
-                await session.setupSystemPrompt(undefined,
-                    "You are an English teacher for students whose first language is not English. You and the user will engage in a spoken dialog, exchanging the transcripts of a natural real-time conversation. Encourage the student to talk about topics or stories they bring up, and help them feel confident while speaking. Keep your responses short, generally two or three sentences, and include tips for improving pronunciation when appropriate. Be kind and supportive. You may start each of your sentences with emotions in square brackets such as [encouraging], [thoughtful], or other stage commands like [smiling]. Only use a single pair of square brackets for indicating a stage command."
-                );
-
+                await session.setupSystemPrompt(undefined, undefined);
             } catch (error) {
                 console.error('Error processing system prompt:', error);
                 socket.emit('error', {
@@ -229,10 +157,7 @@ io.on('connection', (socket) => {
         socket.on('audioStart', async (data) => {
             try {
                 console.log('Audio start received', data);
-                // This is for the user's audio. The contentId for this would typically
-                // be managed by the client sending the audio.
-                // It's important to use the DEFAULT_AUDIO_CONFIG here for the user's input.
-                await session.setupStartAudio(DEFAULT_AUDIO_CONFIG);
+                await session.setupStartAudio();
             } catch (error) {
                 console.error('Error processing audio start:', error);
                 socket.emit('error', {
@@ -275,7 +200,7 @@ io.on('connection', (socket) => {
                         (async () => {
                             await session.endAudioContent();
                             await session.endPrompt();
-                            await new Promise(resolve => setTimeout(resolve, 500)); // ✅ Give Bedrock time
+                            await session.close();
                         })(),
                         new Promise((_, reject) =>
                             setTimeout(() => reject(new Error('Session cleanup timeout')), 3000)

@@ -4,8 +4,6 @@ import {
   InvokeModelWithBidirectionalStreamCommand,
   InvokeModelWithBidirectionalStreamInput,
 } from "@aws-sdk/client-bedrock-runtime";
-import axios from 'axios';
-import https from 'https';
 import {
   NodeHttp2Handler,
   NodeHttp2HandlerOptions,
@@ -22,9 +20,9 @@ import {
   DefaultAudioOutputConfiguration,
   DefaultSystemPrompt,
   DefaultTextConfiguration,
-  DefaultToolSchema,
-  WeatherToolSchema
+  KnowledgeBaseToolSchema,
 } from "./consts";
+import { BedrockKnowledgeBaseClient } from "./bedrock-kb-client";
 
 export interface NovaSonicBidirectionalStreamClientConfig {
   requestHandlerConfig?:
@@ -51,13 +49,6 @@ export class StreamSession {
     return this; // For chaining
   }
 
-  public offEvent(eventType: string, handler: (data: any) => void): StreamSession {
-    if (typeof this.client.unregisterEventHandler === 'function') {
-      this.client.unregisterEventHandler(this.sessionId, eventType, handler);
-    }
-    return this; // For chaining
-  }
-
   public async setupPromptStart(): Promise<void> {
     this.client.setupPromptStartEvent(this.sessionId);
   }
@@ -74,12 +65,6 @@ export class StreamSession {
     this.client.setupStartAudioEvent(this.sessionId, audioConfig);
   }
 
-  // --- NEW ADDITION TO StreamSession ---
-  public async sendTextContent(contentId: string, text: string, role: 'ASSISTANT' | 'USER' | 'SYSTEM'): Promise<void> {
-    // Delegate to the main client method
-    await this.client.sendTextContent(this.sessionId, contentId, text, role);
-  }
-  // --- END NEW ADDITION ---
 
   // Stream audio for this session
   public async streamAudio(audioData: Buffer): Promise<void> {
@@ -174,7 +159,7 @@ export class NovaSonicBidirectionalStreamClient {
 
 
   constructor(config: NovaSonicBidirectionalStreamClientConfig) {
-    const nodeHttp2Handler = new NodeHttp2Handler({
+    const http2Client = new NodeHttp2Handler({
       requestTimeout: 300000,
       sessionTimeout: 300000,
       disableConcurrentStreams: false,
@@ -190,7 +175,7 @@ export class NovaSonicBidirectionalStreamClient {
       ...config.clientConfig,
       credentials: config.clientConfig.credentials,
       region: config.clientConfig.region || "us-east-1",
-      requestHandler: nodeHttp2Handler
+      requestHandler: http2Client
     });
 
     this.inferenceConfig = config.inferenceConfig ?? {
@@ -254,86 +239,64 @@ export class NovaSonicBidirectionalStreamClient {
     const tool = toolName.toLowerCase();
 
     switch (tool) {
-      case "getdateandtimetool":
-        const date = new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
-        const pstDate = new Date(date);
-        return {
-          date: pstDate.toISOString().split('T')[0],
-          year: pstDate.getFullYear(),
-          month: pstDate.getMonth() + 1,
-          day: pstDate.getDate(),
-          dayOfWeek: pstDate.toLocaleString('en-US', { weekday: 'long' }).toUpperCase(),
-          timezone: "PST",
-          formattedTime: pstDate.toLocaleTimeString('en-US', {
-            hour12: true,
-            hour: '2-digit',
-            minute: '2-digit'
-          })
-        };
-      case "getweathertool":
-        console.log(`weather tool`)
-        const parsedContent = await this.parseToolUseContentForWeather(toolUseContent);
-        console.log("parsed content")
-        if (!parsedContent) {
+      case "retrieve_benefit_policy":
+        console.log(`Retrieving company benefits: ${JSON.stringify(toolUseContent)}`);
+        const kbContent = await this.parseToolUseContent(toolUseContent);
+        if (!kbContent) {
           throw new Error('parsedContent is undefined');
         }
-        return this.fetchWeatherData(parsedContent?.latitude, parsedContent?.longitude);
+        return this.queryBenefitPolicy(kbContent?.query, kbContent?.maxResults);
       default:
         console.log(`Tool ${tool} not supported`)
         throw new Error(`Tool ${tool} not supported`);
     }
   }
 
-  private async parseToolUseContentForWeather(toolUseContent: any): Promise<{ latitude: number; longitude: number; } | null> {
+  private async queryBenefitPolicy(query: string, numberOfResults: number = 3): Promise<Object> {
+    // Create a client instance
+    const kbClient = new BedrockKnowledgeBaseClient();
+
+    // Replace with your actual Knowledge Base ID
+    const KNOWLEDGE_BASE_ID = 'IXMOXC7K6K';
+
+    try {
+      console.log(`Searching for: "${query}"`);
+
+      // Retrieve information from the Knowledge Base
+      const results = await kbClient.retrieveFromKnowledgeBase({
+        knowledgeBaseId: KNOWLEDGE_BASE_ID,
+        query,
+        numberOfResults: numberOfResults
+      });
+
+      console.log(`Results: ${JSON.stringify(results)}`);
+
+      return { results: results };
+
+    } catch (error) {
+      console.error("Error:", error);
+      return {};
+    }
+  }
+
+  private async parseToolUseContent(toolUseContent: any): Promise<{ query: string; maxResults: number; } | null> {
     try {
       // Check if the content field exists and is a string
       if (toolUseContent && typeof toolUseContent.content === 'string') {
         // Parse the JSON string into an object
         const parsedContent = JSON.parse(toolUseContent.content);
-        console.log(`parsedContent ${parsedContent}`)
+
         // Return the parsed content
         return {
-          latitude: parsedContent.latitude,
-          longitude: parsedContent.longitude
+          query: parsedContent.query,
+          maxResults: parsedContent?.maxResults
         };
       }
+
       return null;
     } catch (error) {
       console.error("Failed to parse tool use content:", error);
       return null;
-    }
-  }
-
-
-  private async fetchWeatherData(
-    latitude: number,
-    longitude: number
-  ): Promise<Record<string, any>> {
-    const ipv4Agent = new https.Agent({ family: 4 });
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`;
-
-    try {
-      const response = await axios.get(url, {
-        httpsAgent: ipv4Agent,
-        timeout: 5000,
-        headers: {
-          'User-Agent': 'MyApp/1.0',
-          'Accept': 'application/json'
-        }
-      });
-      const weatherData = response.data;
-      console.log("weatherData:", weatherData);
-
-      return {
-        weather_data: weatherData
-      };
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        console.error(`Error fetching weather data: ${error.message}`, error);
-      } else {
-        console.error(`Unexpected error: ${error instanceof Error ? error.message : String(error)} `, error);
-      }
-      throw error;
     }
   }
 
@@ -448,7 +411,7 @@ export class NovaSonicBidirectionalStreamClient {
                     if (error.message === "Stream closed" || !session.isActive) {
                       // This is an expected condition when closing the session
                       if (this.activeSessions.has(sessionId)) {
-                        console.log(`Session ${sessionId} closed during wait`);
+                        console.log(`Session \${ sessionId } closed during wait`);
                       }
                       return { value: undefined, done: true };
                     }
@@ -650,21 +613,15 @@ export class NovaSonicBidirectionalStreamClient {
             mediaType: "application/json",
           },
           toolConfiguration: {
+            "toolChoice": {
+              "tool": { "name": "retrieve_benefit_policy" }
+            },
             tools: [{
               toolSpec: {
-                name: "getDateAndTimeTool",
-                description: "Get information about the current date and time.",
+                name: "retrieve_benefit_policy",
+                description: "Retrieves aglia company benefit policy. It includes medical, vision, financial etc.. Anything related with employee policy.",
                 inputSchema: {
-                  json: DefaultToolSchema
-                }
-              }
-            },
-            {
-              toolSpec: {
-                name: "getWeatherTool",
-                description: "Get the current weather for a given location, based on its WGS84 coordinates.",
-                inputSchema: {
-                  json: WeatherToolSchema
+                  json: KnowledgeBaseToolSchema
                 }
               }
             }
@@ -745,63 +702,6 @@ export class NovaSonicBidirectionalStreamClient {
     session.isAudioContentStartSent = true;
     console.log(`Initial events setup complete for session ${sessionId}`);
   }
-
-  // --- NEW ADDITION TO NovaSonicBidirectionalStreamClient ---
-  /**
-   * Sends conversational text content to Nova Sonic for synthesis.
-   * This method constructs and queues the necessary contentStart, textInput, and contentEnd events.
-   * @param sessionId The ID of the current session.
-   * @param contentId A unique ID for this specific text content block (provided from server.ts).
-   * @param text The actual text content to be sent.
-   * @param role The role associated with this text (e.g., 'AGENT' for agent responses).
-   */
-  public async sendTextContent(sessionId: string, contentId: string, text: string, role: 'ASSISTANT' | 'USER' | 'SYSTEM'): Promise<void> {
-    const session = this.activeSessions.get(sessionId);
-    if (!session || !session.isActive) {
-      console.warn(`Attempted to send text to inactive session ${sessionId}`);
-      return;
-    }
-
-    console.log(`Queueing TEXT_CONTENT events for session ${sessionId}, contentId: ${contentId}, role: ${role}`);
-
-    // 1. Content Start Event for the text
-    this.addEventToSessionQueue(sessionId, {
-      event: {
-        contentStart: {
-          promptName: session.promptName,
-          contentName: contentId, // Use the contentId generated in server.ts
-          type: "TEXT",
-          interactive: true, // Typically true for conversational turns
-          role: role,
-          textInputConfiguration: { mediaType: 'text/plain' }, // Assuming plain text input
-        },
-      }
-    });
-
-    // 2. Text Input Event with the actual content
-    this.addEventToSessionQueue(sessionId, {
-      event: {
-        textInput: {
-          promptName: session.promptName,
-          contentName: contentId, // Associate with the same contentId
-          content: text,
-        },
-      }
-    });
-
-    // 3. Content End Event for the text
-    this.addEventToSessionQueue(sessionId, {
-      event: {
-        contentEnd: {
-          promptName: session.promptName,
-          contentName: contentId, // Associate with the same contentId
-        },
-      }
-    });
-    console.log(`TEXT_CONTENT events queued for contentId: ${contentId}`);
-  }
-  // --- END NEW ADDITION ---
-
 
   // Stream an audio chunk for a session
   public async streamAudioChunk(sessionId: string, audioData: Buffer): Promise<void> {
@@ -942,19 +842,6 @@ export class NovaSonicBidirectionalStreamClient {
     session.responseHandlers.set(eventType, handler);
   }
 
-  // Unregister an event handler for a session
-  public unregisterEventHandler(sessionId: string, eventType: string, handler: (data: any) => void): void {
-    const session = this.activeSessions.get(sessionId);
-    if (!session) {
-      throw new Error(`Session ${sessionId} not found`);
-    }
-    // Only remove if the handler matches the currently registered one
-    const currentHandler = session.responseHandlers.get(eventType);
-    if (currentHandler === handler) {
-      session.responseHandlers.delete(eventType);
-    }
-  }
-
   // Dispatch an event to registered handlers
   private dispatchEvent(sessionId: string, eventType: string, data: any): void {
     const session = this.activeSessions.get(sessionId);
@@ -1024,10 +911,15 @@ export class NovaSonicBidirectionalStreamClient {
 
       // Immediately mark as inactive and clean up resources
       session.isActive = false;
+      session.closeSignal.next();
+      session.closeSignal.complete();
       this.activeSessions.delete(sessionId);
       this.sessionLastActivity.delete(sessionId);
+
+      console.log(`Session ${sessionId} force closed`);
     } finally {
       this.sessionCleanupInProgress.delete(sessionId);
     }
   }
+
 }
