@@ -1,18 +1,30 @@
 import express from 'express';
 import http from 'http';
-import path from 'path';
 import { Server } from 'socket.io';
 import { fromIni } from "@aws-sdk/credential-providers";
 import { NovaSonicBidirectionalStreamClient } from './client';
 import { Buffer } from 'node:buffer';
+import uploadRoutes from './routes/upload';
+import { config, validateConfig } from './config';
 
-// Configure AWS credentials
-const AWS_PROFILE_NAME = process.env.AWS_PROFILE || 'bedrock-test';
-
+// Validate required environment variables
+try {
+    validateConfig();
+} catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('Configuration error:', message);
+    process.exit(1);
+}
 // Create Express app and HTTP server
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
+
+// Add JSON body parser middleware
+app.use(express.json());
+
+// Register the upload routes
+app.use('/api', uploadRoutes);
 
 // Create the AWS Bedrock client
 const bedrockClient = new NovaSonicBidirectionalStreamClient({
@@ -20,8 +32,8 @@ const bedrockClient = new NovaSonicBidirectionalStreamClient({
         maxConcurrentStreams: 10,
     },
     clientConfig: {
-        region: process.env.AWS_REGION || "us-east-1",
-        credentials: fromIni({ profile: AWS_PROFILE_NAME })
+        region: config.aws.region,
+        credentials: fromIni({ profile: config.aws.profile })
     }
 });
 
@@ -48,7 +60,7 @@ setInterval(() => {
 }, 60000);
 
 // Serve static files from the public directory
-app.use(express.static(path.join(__dirname, '../public')));
+app.use(express.static(config.server.publicDir));
 
 // Socket.IO connection handler
 io.on('connection', (socket) => {
@@ -237,12 +249,12 @@ io.on('connection', (socket) => {
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', (_, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Start the server
-const PORT = process.env.PORT || 3000;
+const PORT = config.server.port;
 server.listen(PORT, () => {
     console.log(`Server listening on port ${PORT}`);
     console.log(`Open http://localhost:${PORT} in your browser to access the application`);

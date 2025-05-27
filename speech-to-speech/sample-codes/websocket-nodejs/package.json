@@ -13,16 +13,19 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@aws-sdk/client-bedrock-agent-runtime": "^3.782",
+    "@aws-sdk/client-bedrock-agent": "^3.817.0",
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.817.0",
     "@aws-sdk/client-bedrock-runtime": "^3.785",
+    "@aws-sdk/client-s3": "^3.817.0",
     "@aws-sdk/credential-providers": "^3.782",
     "@smithy/node-http-handler": "^4.0.4",
     "@smithy/types": "^4.1.0",
     "@types/express": "^5.0.0",
     "@types/node": "^22.13.9",
     "axios": "^1.6.2",
-    "dotenv": "^16.3.1",
+    "dotenv": "^16.5.0",
     "express": "^4.21.2",
+    "multer": "^2.0.0",
     "pnpm": "^10.6.1",
     "rxjs": "^7.8.2",
     "socket.io": "^4.8.1",
@@ -30,6 +33,7 @@
     "uuid": "^11.1.0"
   },
   "devDependencies": {
+    "@types/multer": "^1.4.12",
     "@types/uuid": "^10.0.0",
     "tsx": "^4.19.3"
   }

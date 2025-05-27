@@ -10,6 +10,8 @@ const stopButton = document.getElementById('stop');
 const statusElement = document.getElementById('status');
 const chatContainer = document.getElementById('chat-container');
 
+
+
 // Chat history management
 let chat = { history: [] };
 const chatRef = { current: chat };

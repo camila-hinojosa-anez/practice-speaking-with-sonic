@@ -14,11 +14,17 @@ The system consists of a server that handles the bidirectional streaming and AWS
 │       │   ├── play/       # Audio playback components
 │       │   └── util/       # Utility functions and managers
 │       ├── main.js         # Main application logic
+│       ├── pdf-upload.js   # PDF upload functionality
 │       └── style.css       # Application styling
 ├── src/                    # TypeScript source files
 │   ├── client.ts           # AWS Bedrock client implementation
+│   ├── config.ts           # Configuration management
+│   ├── routes/             # Express routes
+│   │   └── upload.ts       # PDF upload routes
+│   ├── s3-bedrock-client.ts # S3 and Bedrock KB client
 │   ├── server.ts           # Express server implementation
 │   └── types.ts            # TypeScript type definitions
+├── .env.example            # Example environment variables
 └── tsconfig.json           # TypeScript configuration
 ```
 
@@ -28,6 +34,8 @@ The system consists of a server that handles the bidirectional streaming and AWS
 - AWS Account with Bedrock access
 - AWS CLI configured with appropriate credentials
 - Modern web browser with WebAudio API support
+- S3 bucket for PDF storage
+- Bedrock Knowledge Base configured
 
 **Required packages:**
 
@@ -35,7 +43,9 @@ The system consists of a server that handles the bidirectional streaming and AWS
 {
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.785",
-    "@aws-sdk/client-bedrock-agent-runtime": "^3.782",
+    "@aws-sdk/client-bedrock-agent": "^3.817.0",
+    "@aws-sdk/client-bedrock-agent-runtime": "^3.817.0",
+    "@aws-sdk/client-s3": "^3.817.0",
     "@aws-sdk/credential-providers": "^3.782",
     "@smithy/node-http-handler": "^4.0.4",
     "@smithy/types": "^4.1.0",
@@ -44,11 +54,17 @@ The system consists of a server that handles the bidirectional streaming and AWS
     "axios": "^1.6.2",
     "dotenv": "^16.3.1",
     "express": "^4.21.2",
+    "multer": "^2.0.0",
     "pnpm": "^10.6.1",
     "rxjs": "^7.8.2",
     "socket.io": "^4.8.1",
     "ts-node": "^10.9.2",
     "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@types/multer": "^1.4.12",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.3"
   }
 }
 ```
@@ -65,13 +81,22 @@ cd <repository-name>
 npm install
 ```
 
-3. Configure AWS credentials:
+3. Configure environment variables:
+```bash
+# Copy the example environment file
+cp .env.example .env
+
+# Edit the .env file with your specific values
+nano .env
+```
+
+4. Configure AWS credentials:
 ```bash
 # Configure AWS CLI with your credentials
 aws configure --profile bedrock-test
 ```
 
-4. Build the TypeScript code:
+5. Build the TypeScript code:
 ```bash
 npm run build
 ```
@@ -88,6 +113,36 @@ http://localhost:3000
 ```
 
 3. Grant microphone permissions when prompted.
+
+### Environment Variables
+The application uses the following environment variables:
+
+```
+# AWS Configuration
+AWS_REGION=us-east-1
+AWS_PROFILE=bedrock-test
+
+# Bedrock Knowledge Base Configuration
+KNOWLEDGE_BASE_ID=your-knowledge-base-id
+DATA_SOURCE_ID=your-data-source-id
+
+# S3 Configuration
+S3_BUCKET_NAME=your-s3-bucket-name
+
+# Server Configuration
+PORT=3000
+```
+
+### PDF Upload Feature
+The application includes a feature to upload PDF files to an S3 bucket and trigger a Bedrock Knowledge Base sync:
+
+1. Click the "Choose File" button in the PDF upload section
+2. Select a PDF file (max 10MB)
+3. Click "Upload PDF"
+4. The application will:
+   - Upload the PDF to your S3 bucket
+   - Trigger a Knowledge Base sync
+   - Display the sync status
 
 ### More Detailed Examples
 1. Starting a conversation:
@@ -135,6 +190,10 @@ socket.emit('systemPrompt', SYSTEM_PROMPT);
   });
   ```
 
+4. Environment Variable Issues
+- Problem: "Missing required environment variables" error
+- Solution: Ensure all required variables are set in your `.env` file
+
 ## Data Flow
 The application processes audio input through a pipeline that converts speech to text, processes it with AWS Bedrock, and returns both text and audio responses.
 
@@ -161,3 +220,5 @@ The application runs on a Node.js server with the following key components:
 - Express.js server handling WebSocket connections
 - Socket.IO for real-time communication
 - Nova Sonic client for speech to speech model processing
+- S3 storage for PDF documents
+- Bedrock Knowledge Base integration
