@@ -51,6 +51,13 @@ export class StreamSession {
     return this; // For chaining
   }
 
+  public offEvent(eventType: string, handler: (data: any) => void): StreamSession {
+    if (typeof this.client.unregisterEventHandler === 'function') {
+      this.client.unregisterEventHandler(this.sessionId, eventType, handler);
+    }
+    return this; // For chaining
+  }
+
   public async setupPromptStart(): Promise<void> {
     this.client.setupPromptStartEvent(this.sessionId);
   }
@@ -67,6 +74,12 @@ export class StreamSession {
     this.client.setupStartAudioEvent(this.sessionId, audioConfig);
   }
 
+  // --- NEW ADDITION TO StreamSession ---
+  public async sendTextContent(contentId: string, text: string, role: 'ASSISTANT' | 'USER' | 'SYSTEM'): Promise<void> {
+    // Delegate to the main client method
+    await this.client.sendTextContent(this.sessionId, contentId, text, role);
+  }
+  // --- END NEW ADDITION ---
 
   // Stream audio for this session
   public async streamAudio(audioData: Buffer): Promise<void> {
@@ -435,7 +448,7 @@ export class NovaSonicBidirectionalStreamClient {
                     if (error.message === "Stream closed" || !session.isActive) {
                       // This is an expected condition when closing the session
                       if (this.activeSessions.has(sessionId)) {
-                        console.log(`Session \${ sessionId } closed during wait`);
+                        console.log(`Session ${sessionId} closed during wait`);
                       }
                       return { value: undefined, done: true };
                     }
@@ -733,6 +746,63 @@ export class NovaSonicBidirectionalStreamClient {
     console.log(`Initial events setup complete for session ${sessionId}`);
   }
 
+  // --- NEW ADDITION TO NovaSonicBidirectionalStreamClient ---
+  /**
+   * Sends conversational text content to Nova Sonic for synthesis.
+   * This method constructs and queues the necessary contentStart, textInput, and contentEnd events.
+   * @param sessionId The ID of the current session.
+   * @param contentId A unique ID for this specific text content block (provided from server.ts).
+   * @param text The actual text content to be sent.
+   * @param role The role associated with this text (e.g., 'AGENT' for agent responses).
+   */
+  public async sendTextContent(sessionId: string, contentId: string, text: string, role: 'ASSISTANT' | 'USER' | 'SYSTEM'): Promise<void> {
+    const session = this.activeSessions.get(sessionId);
+    if (!session || !session.isActive) {
+      console.warn(`Attempted to send text to inactive session ${sessionId}`);
+      return;
+    }
+
+    console.log(`Queueing TEXT_CONTENT events for session ${sessionId}, contentId: ${contentId}, role: ${role}`);
+
+    // 1. Content Start Event for the text
+    this.addEventToSessionQueue(sessionId, {
+      event: {
+        contentStart: {
+          promptName: session.promptName,
+          contentName: contentId, // Use the contentId generated in server.ts
+          type: "TEXT",
+          interactive: true, // Typically true for conversational turns
+          role: role,
+          textInputConfiguration: { mediaType: 'text/plain' }, // Assuming plain text input
+        },
+      }
+    });
+
+    // 2. Text Input Event with the actual content
+    this.addEventToSessionQueue(sessionId, {
+      event: {
+        textInput: {
+          promptName: session.promptName,
+          contentName: contentId, // Associate with the same contentId
+          content: text,
+        },
+      }
+    });
+
+    // 3. Content End Event for the text
+    this.addEventToSessionQueue(sessionId, {
+      event: {
+        contentEnd: {
+          promptName: session.promptName,
+          contentName: contentId, // Associate with the same contentId
+        },
+      }
+    });
+    console.log(`TEXT_CONTENT events queued for contentId: ${contentId}`);
+  }
+  // --- END NEW ADDITION ---
+
+
   // Stream an audio chunk for a session
   public async streamAudioChunk(sessionId: string, audioData: Buffer): Promise<void> {
     const session = this.activeSessions.get(sessionId);
@@ -872,6 +942,19 @@ export class NovaSonicBidirectionalStreamClient {
     session.responseHandlers.set(eventType, handler);
   }
 
+  // Unregister an event handler for a session
+  public unregisterEventHandler(sessionId: string, eventType: string, handler: (data: any) => void): void {
+    const session = this.activeSessions.get(sessionId);
+    if (!session) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+    // Only remove if the handler matches the currently registered one
+    const currentHandler = session.responseHandlers.get(eventType);
+    if (currentHandler === handler) {
+      session.responseHandlers.delete(eventType);
+    }
+  }
+
   // Dispatch an event to registered handlers
   private dispatchEvent(sessionId: string, eventType: string, data: any): void {
     const session = this.activeSessions.get(sessionId);
@@ -941,15 +1024,10 @@ export class NovaSonicBidirectionalStreamClient {
 
       // Immediately mark as inactive and clean up resources
       session.isActive = false;
-      session.closeSignal.next();
-      session.closeSignal.complete();
       this.activeSessions.delete(sessionId);
       this.sessionLastActivity.delete(sessionId);
-
-      console.log(`Session ${sessionId} force closed`);
     } finally {
       this.sessionCleanupInProgress.delete(sessionId);
     }
   }
-
 }

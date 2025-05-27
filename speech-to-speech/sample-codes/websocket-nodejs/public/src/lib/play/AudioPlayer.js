@@ -18,28 +18,48 @@ export class AudioPlayer {
     }
 
     async start() {
-        this.audioContext = new AudioContext({ "sampleRate": 24000 });
-        this.analyser = this.audioContext.createAnalyser();
-        this.analyser.fftSize = 512;
+        try {
+            console.log("Starting AudioPlayer initialization");
+            this.audioContext = new AudioContext({ "sampleRate": 24000 });
+            console.log("AudioContext created with sample rate:", this.audioContext.sampleRate);
+            
+            this.analyser = this.audioContext.createAnalyser();
+            this.analyser.fftSize = 512;
 
-        // Chrome caches worklet code more aggressively, so add a nocache parameter to make sure we get the latest
-        await this.audioContext.audioWorklet.addModule(AudioPlayerWorkletUrl); // + "?nocache=" + Date.now());
-        this.workletNode = new AudioWorkletNode(this.audioContext, "audio-player-processor");
-        this.workletNode.connect(this.analyser);
-        this.analyser.connect(this.audioContext.destination);
-        this.recorderNode = this.audioContext.createScriptProcessor(512, 1, 1);
-        this.recorderNode.onaudioprocess = (event) => {
-            // Pass the input along as-is
-            const inputData = event.inputBuffer.getChannelData(0);
-            const outputData = event.outputBuffer.getChannelData(0);
-            outputData.set(inputData);
-            // Notify listeners that the audio was played
-            const samples = new Float32Array(outputData.length);
-            samples.set(outputData);
-            this.onAudioPlayedListeners.map(listener => listener(samples));
+            // Chrome caches worklet code more aggressively, so add a nocache parameter to make sure we get the latest
+            console.log("Loading audio worklet module");
+            await this.audioContext.audioWorklet.addModule(AudioPlayerWorkletUrl + "?nocache=" + Date.now());
+            console.log("Audio worklet module loaded successfully");
+
+            this.workletNode = new AudioWorkletNode(this.audioContext, "audio-player-processor");
+            console.log("AudioWorkletNode created");
+
+            // Connect nodes
+            this.workletNode.connect(this.analyser);
+            this.analyser.connect(this.audioContext.destination);
+            console.log("Audio nodes connected successfully");
+
+            this.recorderNode = this.audioContext.createScriptProcessor(512, 1, 1);
+            this.recorderNode.onaudioprocess = (event) => {
+                // Pass the input along as-is
+                const inputData = event.inputBuffer.getChannelData(0);
+                const outputData = event.outputBuffer.getChannelData(0);
+                outputData.set(inputData);
+                // Notify listeners that the audio was played
+                const samples = new Float32Array(outputData.length);
+                samples.set(outputData);
+                this.onAudioPlayedListeners.map(listener => listener(samples));
+            }
+            console.log("ScriptProcessor node created and configured");
+
+            this.#maybeOverrideInitialBufferLength();
+            this.initialized = true;
+            console.log("AudioPlayer initialization completed successfully");
+        } catch (error) {
+            console.error("Error during AudioPlayer initialization:", error);
+            this.initialized = false;
+            throw error;
         }
-        this.#maybeOverrideInitialBufferLength();
-        this.initialized = true;
     }
 
     bargeIn() {

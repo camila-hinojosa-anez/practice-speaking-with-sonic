@@ -43,9 +43,14 @@ const TARGET_SAMPLE_RATE = 16000;
 const isFirefox = navigator.userAgent.toLowerCase().includes('firefox');
 
 // Custom system prompt - you can modify this
-let SYSTEM_PROMPT = "You are a friend. The user and you will engage in a spoken " +
-    "dialog exchanging the transcripts of a natural real-time conversation. Keep your responses short, " +
-    "generally two or three sentences for chatty scenarios.";
+let SYSTEM_PROMPT = "ASK FOR THE NAME AT THE BEGINNING. " +
+
+  "You are an encouraging and patient English teacher. " +
+  "Engage in a friendly spoken dialogue with the student. " +
+  "Speak clearly and use short, simple sentences based on the student's level. " +
+  "Correct grammar and pronunciation gently when necessary, and give short explanations or examples when helpful. " +
+  "Ask follow-up questions to keep the conversation going and help the student feel comfortable practicing English.";
+
 
 // Initialize WebSocket audio
 async function initAudio() {
@@ -243,6 +248,7 @@ function handleTextOutput(data) {
             message: data.content
         };
         chatHistoryManager.addTextMessage(messageData);
+        
     }
 }
 
@@ -425,31 +431,33 @@ socket.on('contentStart', (data) => {
 // Handle text output from the server
 socket.on('textOutput', (data) => {
     console.log('Received text output:', data);
-
+  
     if (role === 'USER') {
-        // When user text is received, show thinking indicator for assistant response
-        transcriptionReceived = true;
-        //hideUserThinkingIndicator();
-
-        // Add user message to chat
-        handleTextOutput({
-            role: data.role,
-            content: data.content
-        });
-
-        // Show assistant thinking indicator after user text appears
-        showAssistantThinkingIndicator();
+      transcriptionReceived = true;
+  
+      // 1. Agrega el texto al historial de chat
+      handleTextOutput({
+        role: data.role,
+        content: data.content
+      });
+  
+      // 2. Muestra indicador de "pensando"
+      showAssistantThinkingIndicator();
+  
+      // 3. 🔥 ENVÍA EL TEXTO TRANSCRITO AL BACKEND PARA CONSULTAR LA KNOWLEDGE BASE
+      socket.emit('userText', data.content);
     }
     else if (role === 'ASSISTANT') {
-        //hideAssistantThinkingIndicator();
-        if (displayAssistantText) {
-            handleTextOutput({
-                role: data.role,
-                content: data.content
-            });
-        }
+      if (displayAssistantText) {
+        handleTextOutput({
+          role: data.role,
+          content: data.content
+        });
+      }
     }
-});
+  });
+  
+
 
 // Handle audio output
 socket.on('audioOutput', (data) => {
