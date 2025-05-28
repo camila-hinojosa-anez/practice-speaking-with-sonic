@@ -1,4 +1,5 @@
 import { AudioPlayer } from './lib/play/AudioPlayer.js';
+import './lib/play/audio-processor.js';
 import { ChatHistoryManager } from "./lib/util/ChatHistoryManager.js";
 
 // Connect to the server
@@ -91,6 +92,8 @@ async function initializeSession() {
     }
 }
 
+// new function to start streaming audio
+
 async function startStreaming() {
     if (isStreaming) return;
 
@@ -100,34 +103,33 @@ async function startStreaming() {
             await initializeSession();
         }
 
-        // Create audio processor
         sourceNode = audioContext.createMediaStreamSource(audioStream);
 
-        // Use ScriptProcessorNode for audio processing
-        if (audioContext.createScriptProcessor) {
-            processor = audioContext.createScriptProcessor(512, 1, 1);
-
-            processor.onaudioprocess = (e) => {
-                if (!isStreaming) return;
-
-                const inputData = e.inputBuffer.getChannelData(0);
-
-                // Convert to 16-bit PCM
-                const pcmData = new Int16Array(inputData.length);
-                for (let i = 0; i < inputData.length; i++) {
-                    pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
-                }
-
-                // Convert to base64 (browser-safe way)
-                const base64Data = arrayBufferToBase64(pcmData.buffer);
-
-                // Send to server
-                socket.emit('audioInput', base64Data);
-            };
-
-            sourceNode.connect(processor);
-            processor.connect(audioContext.destination);
+        // Use AudioWorkletNode for audio processing
+        if (!audioContext.audioWorklet.modules.includes('audio-processor.js')) {
+            await audioContext.audioWorklet.addModule('src/audio-processor.js');
         }
+        processor = new AudioWorkletNode(audioContext, 'audio-processor');
+
+        processor.port.onmessage = (event) => {
+            if (!isStreaming) return;
+            const inputData = event.data;
+
+            // Convert to 16-bit PCM
+            const pcmData = new Int16Array(inputData.length);
+            for (let i = 0; i < inputData.length; i++) {
+                pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+            }
+
+            // Convert to base64 (browser-safe way)
+            const base64Data = arrayBufferToBase64(pcmData.buffer);
+
+            // Send to server
+            socket.emit('audioInput', base64Data);
+        };
+
+        sourceNode.connect(processor);
+        processor.connect(audioContext.destination);
 
         isStreaming = true;
         startButton.disabled = true;
@@ -145,6 +147,8 @@ async function startStreaming() {
         statusElement.className = "error";
     }
 }
+
+
 
 // Convert ArrayBuffer to base64 string
 function arrayBufferToBase64(buffer) {
